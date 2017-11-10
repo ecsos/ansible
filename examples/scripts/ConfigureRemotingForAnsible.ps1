@@ -45,6 +45,8 @@
 # Version 1.5 - 2017-02-09
 # Version 1.6 - 2017-04-18
 
+# configured sha256 self signed cert - nick salonen
+
 # Support -Verbose option
 [CmdletBinding()]
 
@@ -56,6 +58,8 @@ Param (
     [switch]$ForceNewSSLCert,
     [switch]$EnableCredSSP
 )
+
+Import-Module PKI
 
 Function Write-Log
 {
@@ -102,16 +106,24 @@ Function New-LegacySelfSignedCert
     $ekuext = New-Object -COM "X509Enrollment.CX509ExtensionEnhancedKeyUsage.1"
     $ekuext.InitializeEncode($ekuoids)
 
+
+    [string]$SignatureAlgorithm = "SHA256"
+    $SigOID = New-Object -ComObject X509Enrollment.CObjectId
+    $SigOID.InitializeFromValue(([Security.Cryptography.Oid]$SignatureAlgorithm).Value)
+
+
     $cert = New-Object -COM "X509Enrollment.CX509CertificateRequestCertificate.1"
     $cert.InitializeFromPrivateKey(2, $key, "")
     $cert.Subject = $name
     $cert.Issuer = $cert.Subject
     $cert.NotBefore = (Get-Date).AddDays(-1)
     $cert.NotAfter = $cert.NotBefore.AddDays($ValidDays)
+    $cert.SignatureInformation.HashAlgorithm = $SigOID
     $cert.X509Extensions.Add($ekuext)
     $cert.Encode()
 
     $enrollment = New-Object -COM "X509Enrollment.CX509Enrollment.1"
+    $enrollment.CertificateFriendlyName = "Devops"
     $enrollment.InitializeFromRequest($cert)
     $certdata = $enrollment.CreateRequest(0)
     $enrollment.InstallResponse(2, $certdata, 0, "")
@@ -231,6 +243,7 @@ Else
     # Force a new SSL cert on Listener if the $ForceNewSSLCert
     If ($ForceNewSSLCert)
     {
+        get-childitem cert:/LocalMachine/My | ?{$_.FriendlyName -eq "Devops"} | remove-item
 
         # We cannot use New-SelfSignedCertificate on 2012R2 and earlier
         $thumbprint = New-LegacySelfSignedCert -SubjectName $SubjectName -ValidDays $CertValidityDays
@@ -285,7 +298,7 @@ $fwtest2 = netsh advfirewall firewall show rule name="Allow WinRM HTTPS" profile
 If ($fwtest1.count -lt 5)
 {
     Write-Verbose "Adding firewall rule to allow WinRM HTTPS."
-    netsh advfirewall firewall add rule profile=any name="Allow WinRM HTTPS" dir=in localport=5986 protocol=TCP action=allow
+    netsh advfirewall firewall add rule profile=any name="Allow WinRM HTTPS" dir=in localport=5986 protocol=TCP action=allow remoteip=10.0.0.0/8
     Write-Log "Added firewall rule to allow WinRM HTTPS."
 }
 ElseIf (($fwtest1.count -ge 5) -and ($fwtest2.count -lt 5))
